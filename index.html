@@ -13,32 +13,45 @@ button{font:inherit;font-weight:600;padding:10px 12px;border:0;border-radius:8px
 #m{min-height:1.5em;margin-top:12px}
 </style></head><body><main>
 <h1>Private page</h1><p>Enter the passphrase to open it.</p>
-<form id="f"><input type="password" id="p" autocomplete="current-password" aria-label="Passphrase" required>
+<form id="f"><input type="password" id="p" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" aria-label="Passphrase" required>
+<label><input type="checkbox" id="s"> Show what I type</label>
 <label><input type="checkbox" id="k"> Remember on this device</label><button>Open</button></form><p id="m" role="status"></p>
+<p style="font-size:14px">Capitals and extra spaces do not matter.</p>
 </main><script>
 const ROUNDS = 600000, m = document.getElementById("m"), keys = {};
 async function keyFor(salt, pass){ const id = Array.from(salt).join(",");
   if (!keys[id]) { const km = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
     keys[id] = await crypto.subtle.deriveKey({name: "PBKDF2", salt, iterations: ROUNDS, hash: "SHA-256"}, km, {name: "AES-GCM", length: 256}, false, ["decrypt"]); }
   return keys[id]; }
-async function dec(buf, pass){ const u = new Uint8Array(buf), key = await keyFor(u.slice(5, 21), pass);
+const norm = p => String(p).normalize("NFKC").trim().split(/\s+/).join(" ").toLowerCase();
+async function dec(buf, pass){ const u = new Uint8Array(buf), key = await keyFor(u.slice(5, 21), norm(pass));
   return new TextDecoder().decode(await crypto.subtle.decrypt({name: "AES-GCM", iv: u.slice(21, 33)}, key, u.slice(33))); }
 async function openPage(pass, keep){
+  if (!window.crypto || !crypto.subtle) { m.textContent = "This browser cannot unlock the page here. Open the address with https:// at the front, in a current browser."; return; }
   m.textContent = "Opening. This can take a few seconds on a tablet.";
+  let pg, st;
   try {
-    const [pg, st] = await Promise.all([fetch("page.enc", {cache: "no-store"}).then(r => { if (!r.ok) throw new Error("missing"); return r.arrayBuffer(); }),
+    [pg, st] = await Promise.all([fetch("page.enc", {cache: "no-store"}).then(r => { if (!r.ok) throw new Error("http " + r.status); return r.arrayBuffer(); }),
       fetch("status.enc", {cache: "no-store"}).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null)]);
-    const html = await dec(pg, pass); let status = null;
-    if (st) { try { status = JSON.parse(await dec(st, pass)); } catch (e) {} }
-    try { keep ? localStorage.setItem("rmap_pass", pass) : localStorage.removeItem("rmap_pass"); } catch (e) {}
-    if (status) window.RMAP_STATUS = status;
-    document.open(); document.write(html); document.close();
-  } catch (e) {
-    m.textContent = e.message === "missing" ? "The page file is missing." : "That passphrase did not open the page.";
+  } catch (e) { m.textContent = "The page could not be downloaded (" + e.message + "). Check the connection and try again."; return; }
+  let html;
+  try { html = await dec(pg, pass); }
+  catch (e) {
+    m.textContent = e && e.name === "OperationError" ? "That passphrase did not open the page. Tick \"Show what I type\" to check it."
+      : "This browser could not unlock the page (" + ((e && e.name) || "error") + "). Try a current version of Chrome, Safari or Firefox.";
     try { localStorage.removeItem("rmap_pass"); } catch (e2) {}
+    return;
   }
+  let status = null;
+  if (st) { try { status = JSON.parse(await dec(st, pass)); } catch (e) {} }
+  try { keep ? localStorage.setItem("rmap_pass", pass) : localStorage.removeItem("rmap_pass"); } catch (e) {}
+  if (status) window.RMAP_STATUS = status;
+  document.open(); document.write(html); document.close();
 }
 document.getElementById("f").onsubmit = e => { e.preventDefault(); openPage(document.getElementById("p").value, document.getElementById("k").checked); };
-if (!window.crypto || !crypto.subtle) m.textContent = "This browser cannot open the page. Use a current browser over https.";
+document.getElementById("s").onchange = e => { document.getElementById("p").type = e.target.checked ? "text" : "password"; };
+// The unlock needs a secure connection: move a plain http visit to https before anything is typed.
+if (location.protocol === "http:" && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) location.replace("https://" + location.host + location.pathname + location.search);
+else if (!window.crypto || !crypto.subtle) m.textContent = "This browser cannot unlock the page here. Open the address with https:// at the front, in a current browser.";
 else { let saved = null; try { saved = localStorage.getItem("rmap_pass"); } catch (e) {} if (saved) openPage(saved, true); }
 </script></body></html>
