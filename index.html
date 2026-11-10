@@ -1,0 +1,44 @@
+<!doctype html><html lang="en-AU"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow">
+<title>Private page</title>
+<style>
+:root{--bg:#f6f7f4;--fg:#1c2420;--mu:#5d6b63;--ln:#d9dfd9;--ac:#2f6b4f;--on:#ffffff}
+@media (prefers-color-scheme:dark){:root{--bg:#121815;--fg:#e4ebe6;--mu:#9db0a5;--ln:#2c3832;--ac:#79c09a;--on:#121815;color-scheme:dark}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,"Segoe UI",sans-serif;min-height:100vh;display:grid;place-items:center;
+  padding:24px max(16px,env(safe-area-inset-right,0px)) 24px max(16px,env(safe-area-inset-left,0px));box-sizing:border-box}
+main{width:100%;max-width:380px}h1{font-size:22px;margin:0 0 4px}p{color:var(--mu);margin:0 0 16px}
+form{display:grid;gap:12px}input[type=password]{font:inherit;padding:10px 12px;border:1px solid var(--ln);border-radius:8px;background:transparent;color:inherit}
+label{display:flex;gap:8px;align-items:center;color:var(--mu);font-size:14px}
+button{font:inherit;font-weight:600;padding:10px 12px;border:0;border-radius:8px;background:var(--ac);color:var(--on);cursor:pointer}
+#m{min-height:1.5em;margin-top:12px}
+</style></head><body><main>
+<h1>Private page</h1><p>Enter the passphrase to open it.</p>
+<form id="f"><input type="password" id="p" autocomplete="current-password" aria-label="Passphrase" required>
+<label><input type="checkbox" id="k"> Remember on this device</label><button>Open</button></form><p id="m" role="status"></p>
+</main><script>
+const ROUNDS = 600000, m = document.getElementById("m"), keys = {};
+async function keyFor(salt, pass){ const id = Array.from(salt).join(",");
+  if (!keys[id]) { const km = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
+    keys[id] = await crypto.subtle.deriveKey({name: "PBKDF2", salt, iterations: ROUNDS, hash: "SHA-256"}, km, {name: "AES-GCM", length: 256}, false, ["decrypt"]); }
+  return keys[id]; }
+async function dec(buf, pass){ const u = new Uint8Array(buf), key = await keyFor(u.slice(5, 21), pass);
+  return new TextDecoder().decode(await crypto.subtle.decrypt({name: "AES-GCM", iv: u.slice(21, 33)}, key, u.slice(33))); }
+async function openPage(pass, keep){
+  m.textContent = "Opening. This can take a few seconds on a tablet.";
+  try {
+    const [pg, st] = await Promise.all([fetch("page.enc", {cache: "no-store"}).then(r => { if (!r.ok) throw new Error("missing"); return r.arrayBuffer(); }),
+      fetch("status.enc", {cache: "no-store"}).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null)]);
+    const html = await dec(pg, pass); let status = null;
+    if (st) { try { status = JSON.parse(await dec(st, pass)); } catch (e) {} }
+    try { keep ? localStorage.setItem("rmap_pass", pass) : localStorage.removeItem("rmap_pass"); } catch (e) {}
+    if (status) window.RMAP_STATUS = status;
+    document.open(); document.write(html); document.close();
+  } catch (e) {
+    m.textContent = e.message === "missing" ? "The page file is missing." : "That passphrase did not open the page.";
+    try { localStorage.removeItem("rmap_pass"); } catch (e2) {}
+  }
+}
+document.getElementById("f").onsubmit = e => { e.preventDefault(); openPage(document.getElementById("p").value, document.getElementById("k").checked); };
+if (!window.crypto || !crypto.subtle) m.textContent = "This browser cannot open the page. Use a current browser over https.";
+else { let saved = null; try { saved = localStorage.getItem("rmap_pass"); } catch (e) {} if (saved) openPage(saved, true); }
+</script></body></html>
